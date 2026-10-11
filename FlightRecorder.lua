@@ -35,67 +35,234 @@ private.FlightRecorder = FlightRecorder
 
 -- Module Variables --
 
+local PAGE_SIZE = 256
+local CLEANUP_FRAME_BUDGET_MS = 0.5
+local CLEANUP_WINDOW_FRACTION = 5 / 6
+
 local currentFlightRecorders = {}
 local activeTriggers = {}
+
 local cleanupTicker
+local cleanupWork
+
+local cleanupFrame = CreateFrame("Frame")
+cleanupFrame:Hide()
 
 -- Implementation --
 
+-- Event storage --
+
+local function CreateHistory()
+    return {
+        firstPage = nil,
+        lastPage = nil,
+    }
+end
+
+local function CreatePage()
+    return {
+        entries = {},
+        firstIndex = 1,
+        count = 0,
+        lastTimestamp = 0,
+        next = nil,
+    }
+end
+
+local function RecordFlightEvent(addonIdentifier, ...)
+    local history = currentFlightRecorders[addonIdentifier]
+
+    if not history then
+        history = CreateHistory()
+        currentFlightRecorders[addonIdentifier] = history
+    end
+
+    local page = history.lastPage
+
+    if not page or page.count >= PAGE_SIZE then
+        local newPage = CreatePage()
+
+        if page then
+            page.next = newPage
+        else
+            history.firstPage = newPage
+        end
+
+        history.lastPage = newPage
+        page = newPage
+    end
+
+    local timestamp = GetTimePreciseSec()
+
+    page.count = page.count + 1
+    page.lastTimestamp = timestamp
+
+    page.entries[page.count] = {
+        timestamp = timestamp,
+        n = select("#", ...),
+        ...
+    }
+end
+
 -- Global rolling cleanup --
 
-local function CleanCurrentFlightRecorders()
-    local cutoff = GetTimePreciseSec() - db.CaptureSeconds
+local function DropFirstPage(history)
+    local page = history.firstPage
 
-    for addonIdentifier, history in pairs(currentFlightRecorders) do
-        -- Do not discard events while this addon's
-        -- post-trigger recording window is active.
-        if not activeTriggers[addonIdentifier] then
-            while history[1]
-                and history[1].timestamp < cutoff do
-                table.remove(history, 1)
+    history.firstPage = page.next
+
+    if not history.firstPage then
+        history.lastPage = nil
+    end
+end
+
+-- Remove expired entries from the beginning of a history.
+-- Return false when the current frame's budget is exhausted.
+local function CleanHistory(history, cutoff, frameDeadline)
+    while history.firstPage do
+        if debugprofilestop() >= frameDeadline then
+            return false
+        end
+
+        local page = history.firstPage
+
+        -- Entire page expired: discard it without
+        -- iterating through its individual entries.
+        if page.lastTimestamp < cutoff then
+            DropFirstPage(history)
+        else
+            -- Only the oldest page can be partially expired.
+            while page.firstIndex <= page.count do
+                if debugprofilestop() >= frameDeadline then
+                    return false
+                end
+
+                local entry = page.entries[page.firstIndex]
+
+                if entry.timestamp >= cutoff then
+                    return true
+                end
+
+                page.entries[page.firstIndex] = nil
+                page.firstIndex = page.firstIndex + 1
             end
 
-            if #history == 0 then
+            DropFirstPage(history)
+        end
+    end
+
+    return true
+end
+
+local function StopCleanupPass()
+    cleanupWork = nil
+    cleanupFrame:Hide()
+end
+
+local function BeginCleanupPass()
+    -- Never run overlapping cleanup passes.
+    if cleanupWork then
+        return
+    end
+
+    local identifiers = {}
+
+    for addonIdentifier in pairs(currentFlightRecorders) do
+        identifiers[#identifiers + 1] = addonIdentifier
+    end
+
+    if #identifiers == 0 then
+        return
+    end
+
+    local now = GetTimePreciseSec()
+
+    cleanupWork = {
+        identifiers = identifiers,
+        index = 1,
+        cutoff = now - db.CaptureSeconds,
+        deadline = now
+            + db.TickerTimer * CLEANUP_WINDOW_FRACTION,
+    }
+
+    cleanupFrame:Show()
+end
+
+local function ProcessCleanupSlice()
+    local work = cleanupWork
+
+    if not work then
+        cleanupFrame:Hide()
+        return
+    end
+
+    -- Stop this cycle before the next global tick.
+    if GetTimePreciseSec() >= work.deadline then
+        StopCleanupPass()
+        return
+    end
+
+    local frameDeadline =
+        debugprofilestop() + CLEANUP_FRAME_BUDGET_MS
+
+    while work.index <= #work.identifiers do
+        local addonIdentifier =
+            work.identifiers[work.index]
+
+        local history =
+            currentFlightRecorders[addonIdentifier]
+
+        -- Preserve the complete recording while an
+        -- addon has an active post-trigger window.
+        if history and not activeTriggers[addonIdentifier] then
+            local completed = CleanHistory(
+                history,
+                work.cutoff,
+                frameDeadline
+            )
+
+            if not completed then
+                -- Resume this same addon on the next frame.
+                return
+            end
+
+            if not history.firstPage then
                 currentFlightRecorders[addonIdentifier] = nil
             end
         end
+
+        work.index = work.index + 1
+
+        if debugprofilestop() >= frameDeadline then
+            return
+        end
     end
+
+    StopCleanupPass()
 end
+
+cleanupFrame:SetScript(
+    "OnUpdate",
+    ProcessCleanupSlice
+)
 
 StartCleanupTicker = function()
     if cleanupTicker then
         return
     end
 
-    CleanCurrentFlightRecorders()
+    BeginCleanupPass()
 
     cleanupTicker = C_Timer.NewTicker(
         db.TickerTimer,
-        CleanCurrentFlightRecorders
+        BeginCleanupPass
     )
-end
-
--- Event recording --
-
-local function RecordFlightEvent(addonIdentifier, ...)
-    local history = currentFlightRecorders[addonIdentifier]
-
-    if not history then
-        history = {}
-        currentFlightRecorders[addonIdentifier] = history
-    end
-
-    table.insert(history, {
-        timestamp = GetTimePreciseSec(),
-        n = select("#", ...),
-        ...
-    })
 end
 
 -- Report submission --
 
 local function SubmitFlightRecorder(addonIdentifier, triggeredAt)
-    local history = currentFlightRecorders[addonIdentifier] or {}
+    local history = currentFlightRecorders[addonIdentifier]
 
     local lines = {
         string.format(
@@ -105,25 +272,35 @@ local function SubmitFlightRecorder(addonIdentifier, triggeredAt)
         )
     }
 
-    for i, entry in ipairs(history) do
-        local values = {}
+    local eventIndex = 0
+    local page = history and history.firstPage
 
-        for j = 1, entry.n do
-            local value = entry[j]
+    while page do
+        for i = page.firstIndex, page.count do
+            local entry = page.entries[i]
+            local values = {}
 
-            if issecretvalue(value) then
-                values[j] = "<secret>"
-            else
-                values[j] = tostring(value)
+            for j = 1, entry.n do
+                local value = entry[j]
+
+                if issecretvalue(value) then
+                    values[j] = "<secret>"
+                else
+                    values[j] = tostring(value)
+                end
             end
+
+            eventIndex = eventIndex + 1
+
+            lines[#lines + 1] = string.format(
+                "%.3f [%d] %s",
+                entry.timestamp,
+                eventIndex,
+                table.concat(values, " ")
+            )
         end
 
-        table.insert(lines, string.format(
-            "%.3f [%d] %s",
-            entry.timestamp,
-            i,
-            table.concat(values, " ")
-        ))
+        page = page.next
     end
 
     BugGrabber:StoreError({
@@ -164,7 +341,6 @@ local function TriggerFlightRecorder(addonIdentifier)
                 trigger.triggeredAt
             )
 
-            -- Reset only the triggered addon's history.
             currentFlightRecorders[addonIdentifier] = nil
             activeTriggers[addonIdentifier] = nil
         end
@@ -172,7 +348,6 @@ local function TriggerFlightRecorder(addonIdentifier)
 end
 
 local function ClearFlightRecorder(addonIdentifier)
-    -- Never clear an active post-trigger recording.
     if activeTriggers[addonIdentifier] then
         return
     end
@@ -180,13 +355,17 @@ local function ClearFlightRecorder(addonIdentifier)
     currentFlightRecorders[addonIdentifier] = nil
 end
 
----@param seconds number
+-- Configuration validation --
+
 local function ValidateSeconds(seconds)
     if type(seconds) ~= "number"
         or seconds ~= seconds
         or seconds <= 0
-        or seconds == math.huge then
-        error("Alluneve-Debug: Seconds must be a positive finite number", 3)
+        or seconds >= math.huge then
+        error(
+            "Alluneve-Debug: Seconds must be a positive finite number",
+            3
+        )
     end
 end
 
@@ -207,24 +386,25 @@ function FlightRecorder.Clear(addonIdentifier)
     ClearFlightRecorder(addonIdentifier)
 end
 
----@return integer
+---@return number
 function FlightRecorder.GetTickerTimer()
     return db.TickerTimer
 end
 
----@return integer
+---@return number
 function FlightRecorder.GetPostTriggerSeconds()
     return db.PostTriggerSeconds
 end
 
----@return integer
+---@return number
 function FlightRecorder.GetCaptureSeconds()
     return db.CaptureSeconds
 end
 
----@param seconds integer
+---@param seconds number
 function FlightRecorder.SetTickerTimer(seconds)
     ValidateSeconds(seconds)
+
     db.TickerTimer = seconds
 
     if cleanupTicker then
@@ -232,19 +412,22 @@ function FlightRecorder.SetTickerTimer(seconds)
         cleanupTicker = nil
     end
 
+    StopCleanupPass()
     StartCleanupTicker()
 end
 
----@param seconds integer
+---@param seconds number
 function FlightRecorder.SetPostTriggerSeconds(seconds)
     ValidateSeconds(seconds)
     db.PostTriggerSeconds = seconds
 end
 
----@param seconds integer
+---@param seconds number
 function FlightRecorder.SetCaptureSeconds(seconds)
     ValidateSeconds(seconds)
 
     db.CaptureSeconds = seconds
-    CleanCurrentFlightRecorders()
+
+    StopCleanupPass()
+    BeginCleanupPass()
 end
