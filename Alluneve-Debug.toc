@@ -1,0 +1,12 @@
+## Interface: 120100
+## Title: Alluneve-Debug
+## Notes: Optional debugging suite
+## Author: Alluneve
+## Version: 1.0.0
+## Dependencies: !BugGrabber
+## SavedVariables: AlluneveDebugDB
+
+Debug.lua
+FlightRecorder.lua
+
+Alluneve-Debug.lua
