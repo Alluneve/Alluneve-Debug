@@ -5,6 +5,7 @@
 ## Version: 1.0.0
 ## Dependencies: !BugGrabber
 ## SavedVariables: AlluneveDebugDB
+## X-Curse-Project-ID: 1739170
 
 Debug.lua
 FlightRecorder.lua
