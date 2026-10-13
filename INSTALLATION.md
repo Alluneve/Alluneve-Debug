@@ -1,6 +1,8 @@
 # Alluneve-Debug — Developer Installation
 
-Alluneve-Debug is an optional debugging service for **World of Warcraft Retail** addons. It requires **!BugGrabber**; **BugSack** is optional for viewing reports.
+Alluneve-Debug is an optional debugging service for **World of Warcraft Retail** addons. It provides severity-based logging, per-addon rolling debug histories, and automatic flight-recorder reports when errors occur.
+
+It requires **!BugGrabber**; **BugSack** is optional for viewing reports.
 
 ## 1. Add the optional dependency
 
@@ -26,13 +28,16 @@ local debugAPI = Alluneve
     and Alluneve.Debug.RegisterYourself(ADDON_NAME)
 
 local debug = debugAPI or {
-    Print = NoOp,
-    Log = NoOp,
+    Debug = NoOp,
+    Info = NoOp,
+    Warn = NoOp,
+    Error = NoOp,
 }
 
 -- Use this interface throughout your addon.
-debug.Print("Initialized")
-debug.Log("Cooldown updated", 12345)
+debug.Info("Initialized")
+debug.Debug("Cooldown updated", 12345)
+debug.Warn("Unexpected cooldown state")
 ```
 
 `RegisterYourself()` returns an API object bound to your addon's identifier. Repeated registrations with the same identifier return the same object.
@@ -43,14 +48,43 @@ The no-op fallback allows your addon to function normally when Alluneve-Debug is
 
 | Method | Purpose |
 | --- | --- |
-| `debug.Print(...)` | Capture an event; optionally print it to chat. |
-| `debug.Log(...)` | Capture an event; optionally append it to the addon's session debug log. |
-| `debug.SubmitLog()` | Submit the addon's session debug log to !BugGrabber. |
-| `debug.ToggleDebugPrint()` | Toggle chat debug printing; returns the new state. |
-| `debug.ToggleDebugLog()` | Toggle session debug-log collection; returns the new state. |
-| `debug.TriggerRecorder()` | Manually trigger the addon's flight recorder without requiring a Lua error. |
+| `debug.Debug(...)` | Record a DEBUG-level message. |
+| `debug.Info(...)` | Record an INFO-level message. |
+| `debug.Warn(...)` | Record a WARN-level message. |
+| `debug.Error(...)` | Record an ERROR-level message and trigger the flight recorder. |
+| `debug.SubmitLog()` | Submit the retained session debug log to !BugGrabber. |
+| `debug.TogglePrint()` | Toggle additional chat output; returns the new state. |
+| `debug.TriggerRecorder()` | Manually trigger a flight-recorder report without requiring a Lua error. |
 
-**Both `Print()` and `Log()` feed the rolling flight recorder regardless of the print/log toggle states.** Only additional chat output and session logging depend on those toggles.
+**All severity levels are always recorded**, independently of whether chat printing is enabled.
+
+Every message is added to both the session debug log and flight recorder. `TogglePrint()` only controls whether messages are additionally displayed in chat.
+
+Calling `Error(...)` records the message before triggering the flight recorder, allowing developers to capture handled errors or unexpected conditions without throwing a Lua exception.
+
+### Session log retention
+
+Each registered addon maintains an independent session debug log, limited to approximately **1 MiB of estimated Lua memory usage**.
+
+When the limit is exceeded, the oldest entries are automatically discarded. This prevents unbounded memory growth during long sessions.
+
+The session log and flight recorder use separate rolling buffers:
+
+- **Session log:** Retains messages based on an estimated memory limit.
+- **Flight recorder:** Retains messages based on a configurable time window.
+
+### Deprecated API
+
+The following methods remain available for backwards compatibility but are marked for removal in version **2.0.0**.
+
+| Method | Replacement |
+| --- | --- |
+| `debug.Print(...)` | `debug.Debug(...)` |
+| `debug.Log(...)` | `debug.Debug(...)` |
+| `debug.ToggleDebugPrint()` | `debug.TogglePrint()` |
+| `debug.ToggleDebugLog()` | No replacement; session logging is always enabled. |
+
+`Print()` and `Log()` now both record DEBUG-level messages. `ToggleDebugLog()` is a no-op.
 
 For methods not included in the no-op fallback, check `debugAPI` before calling them:
 
@@ -60,13 +94,13 @@ if debugAPI then
 end
 ```
 
-Each API method automatically uses the identifier supplied during registration.
+All API methods automatically use the identifier supplied during registration.
 
 ## 4. Flight recorder and error reports
 
 When !BugGrabber captures an error attributable to a registered addon, Alluneve-Debug automatically triggers that addon's flight recorder.
 
-By default, the resulting report contains diagnostic events from **60 seconds before and 10 seconds after the trigger**, providing a timeline of what happened around the error.
+By default, the resulting report contains diagnostic messages from **60 seconds before and 10 seconds after the trigger**, providing a timeline of what happened around the error.
 
 Reports are submitted separately to !BugGrabber and can be inspected through BugSack.
 
@@ -74,7 +108,7 @@ Error attribution is best-effort, using available source paths and addon/taint i
 
 ### Manual triggering
 
-For unexpected behavior that does not produce a Lua error, the recorder can also be triggered manually:
+For unexpected behavior that does not produce a Lua error, developers can trigger the recorder programmatically:
 
 ```lua
 if debugAPI then
@@ -82,13 +116,13 @@ if debugAPI then
 end
 ```
 
-Alternatively, developers can invoke the recorder directly through Alluneve-Debug's slash command:
+Alternatively, the recorder can be triggered directly through Alluneve-Debug's slash command:
 
 ```text
 /alludebug trigger MyAddon
 ```
 
-This triggers the recorder for the specified registered addon, using the same configured capture windows without requiring an error or stack trace.
+This initiates the configured post-trigger recording window without requiring an error or stack trace.
 
 The addon identifier must match the registered identifier exactly, including capitalization.
 
@@ -104,7 +138,7 @@ Alluneve-Debug provides commands for recorder configuration, manual triggering, 
 ```
 
 - `trigger` initiates a flight-recorder capture for the specified addon.
-- `submit` submits the addon's accumulated session debug log to !BugGrabber, equivalent to calling `SubmitLog()` through its API.
+- `submit` submits the addon's currently retained session debug log to !BugGrabber, equivalent to calling `SubmitLog()` through its API.
 
 Both commands require an addon identifier already registered with Alluneve-Debug.
 
@@ -120,6 +154,6 @@ Both commands require an addon identifier already registered with Alluneve-Debug
 /alludebug ticker 60          Global cleanup interval in seconds
 ```
 
-These settings apply globally to the shared recorder, while each registered addon maintains its own diagnostic history.
+These settings apply globally to the flight recorder, while each registered addon maintains its own diagnostic history.
 
-The global cleanup ticker operates regardless of combat, with cleanup work distributed across frames.
+The global cleanup ticker operates regardless of combat, with cleanup work distributed across frames. Session debug logs enforce their memory limits during insertion and do not require an additional ticker.
