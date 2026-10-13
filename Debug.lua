@@ -3,6 +3,7 @@ local Debug = {}
 
 local db
 local flightRecorder
+local helper = private.Helper
 
 -- Constructor --
 
@@ -17,6 +18,9 @@ private.Debug = Debug
 
 -- Module Variables --
 
+local MAX_LOG_BYTES = 1024 * 1024
+
+---@type table<string, RollingLog>
 local debugLogs = {}
 
 -- Implementation --
@@ -33,82 +37,80 @@ local function GetAddonSettings(addonIdentifier)
         settings.DebugPrintSwitch = false
     end
 
-    if settings.DebugLogSwitch == nil then
-        settings.DebugLogSwitch = false
-    end
-
     return settings
 end
 
-local function DebugPrint(addonIdentifier, ...)
-    flightRecorder.Record(addonIdentifier, ...)
+---@param addonIdentifier string
+---@param severity Severity
+---@param message string
+---@param timestamp number
+---@return LogObject
+local function Append(addonIdentifier, severity, message, timestamp)
+    local log = debugLogs[addonIdentifier]
+
+    if not log then
+        log = CreateRollingLog()
+        debugLogs[addonIdentifier] = log
+    end
+
+    local logObject = CreateLogObject(severity, message, timestamp)
+    log.Append(logObject)
+
+    -- Enforce the session log's memory limit on insertion.
+    while log.GetAproximateByteSize() > MAX_LOG_BYTES do
+        log.RemoveOldest()
+    end
+
+    return logObject
+end
+
+---@param addonIdentifier string
+---@param severity Severity
+---@param ... any
+local function Log(addonIdentifier, severity, ...)
+    local message = helper.FormatMessage(...)
+    local timestamp = GetTimePreciseSec()
+
+    flightRecorder.Record(addonIdentifier, severity, message, timestamp)
+
+    local logObject = Append(addonIdentifier, severity, message, timestamp)
 
     local settings = GetAddonSettings(addonIdentifier)
-
     if settings.DebugPrintSwitch then
-        print(...)
+        print(helper.LogObjectToString(addonIdentifier, logObject))
     end
 end
 
-local function DebugLog(addonIdentifier, ...)
-    local settings = GetAddonSettings(addonIdentifier)
-
-    if settings.DebugLogSwitch then
-        debugLogs[addonIdentifier] =
-            debugLogs[addonIdentifier] or {}
-
-        table.insert(debugLogs[addonIdentifier], {
-            n = select("#", ...),
-            ...
-        })
+---@param addonIdentifier string
+local function SubmitLog(addonIdentifier)
+    local log = debugLogs[addonIdentifier]
+    if not log then
+        return
     end
 
-    DebugPrint(addonIdentifier, ...)
-end
+    ---@type LogObject[]
+    local logObjects = {}
 
-local function SubmitDebugLog(addonIdentifier)
-    local lines = {
-        string.format(
-            "%s Debug Log",
-            addonIdentifier
-        )
-    }
-
-    local debugLog = debugLogs[addonIdentifier] or {}
-
-    for i, entry in ipairs(debugLog) do
-        local values = {}
-
-        for j = 1, entry.n do
-            local value = entry[j]
-
-            if issecretvalue(value) then
-                values[j] = "<secret>"
-            else
-                values[j] = tostring(value)
-            end
-        end
-
-        table.insert(lines, string.format(
-            "[%d] %s",
-            i,
-            table.concat(values, " ")
-        ))
+    for logObject in log.Iterator() do
+        logObjects[#logObjects + 1] = logObject
     end
 
-    BugGrabber:StoreError({
-        message = table.concat(lines, "\n"),
-        session = BugGrabber:GetSessionId(),
-        time = date("%Y/%m/%d %H:%M:%S"),
-        counter = 1,
-    })
+    helper.SendToBugGrabber(addonIdentifier, logObjects)
 end
 
-local function ClearDebugLog(addonIdentifier)
-    debugLogs[addonIdentifier] = nil
+---@param addonIdentifier string
+local function ClearLog(addonIdentifier)
+    local log = debugLogs[addonIdentifier]
+
+    if log then
+        log.Clear()
+        debugLogs[addonIdentifier] = nil
+    end
 end
 
-local function TogglePrintSwitch(addonIdentifier)
+---@param addonIdentifier string
+---@return boolean
+local function TogglePrint(addonIdentifier)
     local settings = GetAddonSettings(addonIdentifier)
 
     settings.DebugPrintSwitch =
@@ -117,58 +119,41 @@ local function TogglePrintSwitch(addonIdentifier)
     return settings.DebugPrintSwitch
 end
 
-local function ToggleLogSwitch(addonIdentifier)
+---@param addonIdentifier string
+---@return boolean, boolean
+local function GetState(addonIdentifier)
     local settings = GetAddonSettings(addonIdentifier)
 
-    settings.DebugLogSwitch =
-        not settings.DebugLogSwitch
-
-    return settings.DebugLogSwitch
-end
-
-local function GetDebugState(addonIdentifier)
-    local settings = GetAddonSettings(addonIdentifier)
-
-    return settings.DebugPrintSwitch,
-        settings.DebugLogSwitch
+    return settings.DebugPrintSwitch, true
 end
 
 -- Interfaces --
 
 ---@param addonIdentifier string
-function Debug.Print(addonIdentifier, ...)
-    DebugPrint(addonIdentifier, ...)
+---@param severity Severity
+---@param ... any
+function Debug.Log(addonIdentifier, severity, ...)
+    Log(addonIdentifier, severity, ...)
 end
 
 ---@param addonIdentifier string
-function Debug.Log(addonIdentifier, ...)
-    DebugLog(addonIdentifier, ...)
-end
-
----@param addonIdentifier string
-function Debug.PrintLog(addonIdentifier)
-    SubmitDebugLog(addonIdentifier)
+function Debug.SubmitLog(addonIdentifier)
+    SubmitLog(addonIdentifier)
 end
 
 ---@param addonIdentifier string
 function Debug.Clear(addonIdentifier)
-    ClearDebugLog(addonIdentifier)
+    ClearLog(addonIdentifier)
 end
 
 ---@param addonIdentifier string
 ---@return boolean
 function Debug.TogglePrint(addonIdentifier)
-    return TogglePrintSwitch(addonIdentifier)
-end
-
----@param addonIdentifier string
----@return boolean
-function Debug.ToggleLog(addonIdentifier)
-    return ToggleLogSwitch(addonIdentifier)
+    return TogglePrint(addonIdentifier)
 end
 
 ---@param addonIdentifier string
 ---@return boolean, boolean
 function Debug.GetState(addonIdentifier)
-    return GetDebugState(addonIdentifier)
+    return GetState(addonIdentifier)
 end

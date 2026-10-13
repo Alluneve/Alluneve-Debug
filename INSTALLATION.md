@@ -10,7 +10,7 @@ Install and enable Alluneve-Debug alongside your addon. In your addon's `.toc` f
 ## OptionalDeps: Alluneve-Debug
 ```
 
-This lets WoW load Alluneve-Debug first when it is enabled, without preventing your addon from loading when it is absent.
+This allows WoW to load Alluneve-Debug first when enabled, without preventing your addon from loading when it is absent.
 
 ## 2. Register your addon
 
@@ -35,7 +35,9 @@ debug.Print("Initialized")
 debug.Log("Cooldown updated", 12345)
 ```
 
-`RegisterYourself()` returns an interface bound to your addon's name. Calling it again with the same name returns the same interface. The fallback keeps normal addon functionality working if Alluneve-Debug is missing or disabled.
+`RegisterYourself()` returns an API object bound to your addon's identifier. Repeated registrations with the same identifier return the same object.
+
+The no-op fallback allows your addon to function normally when Alluneve-Debug is missing or disabled.
 
 ## 3. Available API
 
@@ -43,36 +45,81 @@ debug.Log("Cooldown updated", 12345)
 | --- | --- |
 | `debug.Print(...)` | Capture an event; optionally print it to chat. |
 | `debug.Log(...)` | Capture an event; optionally append it to the addon's session debug log. |
-| `debug.SubmitLog()` | Submit that addon's session debug log to !BugGrabber. |
+| `debug.SubmitLog()` | Submit the addon's session debug log to !BugGrabber. |
 | `debug.ToggleDebugPrint()` | Toggle chat debug printing; returns the new state. |
 | `debug.ToggleDebugLog()` | Toggle session debug-log collection; returns the new state. |
+| `debug.TriggerRecorder()` | Manually trigger the addon's flight recorder without requiring a Lua error. |
 
-**Both `Print()` and `Log()` feed the rolling flight recorder regardless of the print/log toggle states.** Only the additional chat output and session log depend on those toggles.
+**Both `Print()` and `Log()` feed the rolling flight recorder regardless of the print/log toggle states.** Only additional chat output and session logging depend on those toggles.
 
-If you expose optional debug commands, guard the additional methods with `debugAPI` rather than calling them on the no-op fallback:
+For methods not included in the no-op fallback, check `debugAPI` before calling them:
 
 ```lua
 if debugAPI then
-    local enabled = debugAPI.ToggleDebugPrint()
-    print("Debug printing:", enabled and "on" or "off")
+    debugAPI.TriggerRecorder()
 end
 ```
 
-## 4. Error reports and testing
+Each API method automatically uses the identifier supplied during registration.
 
-When !BugGrabber captures an error attributable to a registered addon, Alluneve-Debug triggers **that addon's** flight recorder. After the post-trigger window, its buffered events are submitted as a separate !BugGrabber report. Attribution uses source paths and explicit addon/taint information where available; it is best-effort.
+## 4. Flight recorder and error reports
 
-For a useful test, emit several `debug.Print()` or `debug.Log()` events, then verify the resulting flight-recorder entry in BugSack after an attributable Lua error. An error raised directly from `/run` might be attributed to the macro rather than your addon.
+When !BugGrabber captures an error attributable to a registered addon, Alluneve-Debug automatically triggers that addon's flight recorder.
 
-## 5. Global recorder settings
+By default, the resulting report contains diagnostic events from **60 seconds before and 10 seconds after the trigger**, providing a timeline of what happened around the error.
 
-These settings apply to the shared recorder, not to individual registered addons:
+Reports are submitted separately to !BugGrabber and can be inspected through BugSack.
+
+Error attribution is best-effort, using available source paths and addon/taint information.
+
+### Manual triggering
+
+For unexpected behavior that does not produce a Lua error, the recorder can also be triggered manually:
+
+```lua
+if debugAPI then
+    debugAPI.TriggerRecorder()
+end
+```
+
+Alternatively, developers can invoke the recorder directly through Alluneve-Debug's slash command:
+
+```text
+/alludebug trigger MyAddon
+```
+
+This triggers the recorder for the specified registered addon, using the same configured capture windows without requiring an error or stack trace.
+
+The addon identifier must match the registered identifier exactly, including capitalization.
+
+## 5. Slash commands
+
+Alluneve-Debug provides commands for recorder configuration, manual triggering, and log submission.
+
+### Manual diagnostics
+
+```text
+/alludebug trigger <addonIdentifier>
+/alludebug submit <addonIdentifier>
+```
+
+- `trigger` initiates a flight-recorder capture for the specified addon.
+- `submit` submits the addon's accumulated session debug log to !BugGrabber, equivalent to calling `SubmitLog()` through its API.
+
+Both commands require an addon identifier already registered with Alluneve-Debug.
+
+**Triggering the flight recorder and submitting the session debug log are separate operations.**
+
+### Global recorder settings
 
 ```text
 /alludebug                    Show current settings
+/alludebug show               Show current settings
 /alludebug capture 60         Rolling history in seconds
-/alludebug posttrigger 10     Recording after an error, in seconds
+/alludebug posttrigger 10     Recording after a trigger, in seconds
 /alludebug ticker 60          Global cleanup interval in seconds
 ```
 
-The global cleanup ticker operates regardless of combat. Each registered addon keeps its own flight history, while the cleanup work is distributed across frames.
+These settings apply globally to the shared recorder, while each registered addon maintains its own diagnostic history.
+
+The global cleanup ticker operates regardless of combat, with cleanup work distributed across frames.

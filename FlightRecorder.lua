@@ -35,11 +35,12 @@ private.FlightRecorder = FlightRecorder
 
 -- Module Variables --
 
-local PAGE_SIZE = 256
 local CLEANUP_FRAME_BUDGET_MS = 0.5
 local CLEANUP_WINDOW_FRACTION = 5 / 6
 
+---@type table<string, RollingLog>
 local currentFlightRecorders = {}
+
 local activeTriggers = {}
 
 local cleanupTicker
@@ -52,106 +53,56 @@ cleanupFrame:Hide()
 
 -- Event storage --
 
-local function CreateHistory()
-    return {
-        firstPage = nil,
-        lastPage = nil,
-    }
-end
+---@param addonIdentifier string
+---@param severity Severity
+---@param message string
+---@param timestamp number
+local function RecordFlightEvent(addonIdentifier, severity, message, timestamp)
+    local log = currentFlightRecorders[addonIdentifier]
 
-local function CreatePage()
-    return {
-        entries = {},
-        firstIndex = 1,
-        count = 0,
-        lastTimestamp = 0,
-        next = nil,
-    }
-end
-
-local function RecordFlightEvent(addonIdentifier, ...)
-    local history = currentFlightRecorders[addonIdentifier]
-
-    if not history then
-        history = CreateHistory()
-        currentFlightRecorders[addonIdentifier] = history
+    if not log then
+        log = CreateRollingLog()
+        currentFlightRecorders[addonIdentifier] = log
     end
 
-    local page = history.lastPage
-
-    if not page or page.count >= PAGE_SIZE then
-        local newPage = CreatePage()
-
-        if page then
-            page.next = newPage
-        else
-            history.firstPage = newPage
-        end
-
-        history.lastPage = newPage
-        page = newPage
-    end
-
-    local timestamp = GetTimePreciseSec()
-
-    page.count = page.count + 1
-    page.lastTimestamp = timestamp
-
-    page.entries[page.count] = {
-        timestamp = timestamp,
-        n = select("#", ...),
-        ...
-    }
+    log.Append(CreateLogObject(severity, message, timestamp))
 end
 
 -- Global rolling cleanup --
 
-local function DropFirstPage(history)
-    local page = history.firstPage
-
-    history.firstPage = page.next
-
-    if not history.firstPage then
-        history.lastPage = nil
-    end
-end
-
--- Remove expired entries from the beginning of a history.
+-- Remove expired events from the oldest end of a log.
 -- Return false when the current frame's budget is exhausted.
-local function CleanHistory(history, cutoff, frameDeadline)
-    while history.firstPage do
+---@param log RollingLog
+---@param cutoff number
+---@param frameDeadline number
+---@return boolean
+local function CleanHistory(log, cutoff, frameDeadline)
+    while true do
         if debugprofilestop() >= frameDeadline then
             return false
         end
 
-        local page = history.firstPage
+        local maxTimestamp = log.GetOldestPageMaxTimeStamp()
 
-        -- Entire page expired: discard it without
-        -- iterating through its individual entries.
-        if page.lastTimestamp < cutoff then
-            DropFirstPage(history)
+        -- No pages left to clean.
+        if not maxTimestamp then
+            return true
+        end
+
+        -- Entire oldest page has expired.
+        if maxTimestamp < cutoff then
+            log.EvictOldestPage()
         else
-            -- Only the oldest page can be partially expired.
-            while page.firstIndex <= page.count do
-                if debugprofilestop() >= frameDeadline then
-                    return false
-                end
+            -- Check individual entries within the oldest page.
+            local oldest = log.PeekOldest()
 
-                local entry = page.entries[page.firstIndex]
-
-                if entry.timestamp >= cutoff then
-                    return true
-                end
-
-                page.entries[page.firstIndex] = nil
-                page.firstIndex = page.firstIndex + 1
+            if not oldest or oldest.timestamp >= cutoff then
+                return true
             end
 
-            DropFirstPage(history)
+            log.RemoveOldest()
         end
     end
-
-    return true
 end
 
 local function StopCleanupPass()
@@ -209,24 +160,25 @@ local function ProcessCleanupSlice()
         local addonIdentifier =
             work.identifiers[work.index]
 
-        local history =
+        local log =
             currentFlightRecorders[addonIdentifier]
 
-        -- Preserve the complete recording while an
-        -- addon has an active post-trigger window.
-        if history and not activeTriggers[addonIdentifier] then
+        -- Preserve complete histories during an
+        -- active post-trigger recording window.
+        if log and not activeTriggers[addonIdentifier] then
             local completed = CleanHistory(
-                history,
+                log,
                 work.cutoff,
                 frameDeadline
             )
 
             if not completed then
-                -- Resume this same addon on the next frame.
+                -- Resume the same addon next frame.
                 return
             end
 
-            if not history.firstPage then
+            -- Release empty rolling logs.
+            if not log.PeekOldest() then
                 currentFlightRecorders[addonIdentifier] = nil
             end
         end
@@ -261,72 +213,39 @@ end
 
 -- Report submission --
 
-local function SubmitFlightRecorder(addonIdentifier, triggeredAt)
-    local history = currentFlightRecorders[addonIdentifier]
+---@param addonIdentifier string
+local function SubmitFlightRecorder(addonIdentifier)
+    local log = currentFlightRecorders[addonIdentifier]
 
-    local lines = {
-        string.format(
-            "%s Flight Recorder - triggered at %.3f",
-            addonIdentifier,
-            triggeredAt
-        )
-    }
-
-    local eventIndex = 0
-    local page = history and history.firstPage
-
-    while page do
-        for i = page.firstIndex, page.count do
-            local entry = page.entries[i]
-            local values = {}
-
-            for j = 1, entry.n do
-                local value = entry[j]
-
-                if issecretvalue(value) then
-                    values[j] = "<secret>"
-                else
-                    values[j] = tostring(value)
-                end
-            end
-
-            eventIndex = eventIndex + 1
-
-            lines[#lines + 1] = string.format(
-                "%.3f [%d] %s",
-                entry.timestamp,
-                eventIndex,
-                table.concat(values, " ")
-            )
-        end
-
-        page = page.next
+    if not log then
+        return
     end
 
-    BugGrabber:StoreError({
-        message = table.concat(lines, "\n"),
-        session = BugGrabber:GetSessionId(),
-        time = date("%Y/%m/%d %H:%M:%S"),
-        counter = 1,
-    })
+    ---@type LogObject[]
+    local logObjects = {}
+
+    for logObject in log.Iterator() do
+        logObjects[#logObjects + 1] = logObject
+    end
+
+    private.Helper.SendToBugGrabber(addonIdentifier, logObjects)
 end
 
 -- Trigger management --
 
+---@param addonIdentifier string
 local function TriggerFlightRecorder(addonIdentifier)
     local trigger = activeTriggers[addonIdentifier]
 
     if not trigger then
         trigger = {
-            triggeredAt = GetTimePreciseSec(),
             timer = nil,
         }
 
         activeTriggers[addonIdentifier] = trigger
     end
 
-    -- Repeated triggers for the same addon extend
-    -- its post-trigger recording window.
+    -- Repeated triggers extend the post-trigger window.
     if trigger.timer then
         trigger.timer:Cancel()
     end
@@ -336,10 +255,7 @@ local function TriggerFlightRecorder(addonIdentifier)
         function()
             trigger.timer = nil
 
-            SubmitFlightRecorder(
-                addonIdentifier,
-                trigger.triggeredAt
-            )
+            SubmitFlightRecorder(addonIdentifier)
 
             currentFlightRecorders[addonIdentifier] = nil
             activeTriggers[addonIdentifier] = nil
@@ -347,6 +263,7 @@ local function TriggerFlightRecorder(addonIdentifier)
     )
 end
 
+---@param addonIdentifier string
 local function ClearFlightRecorder(addonIdentifier)
     if activeTriggers[addonIdentifier] then
         return
@@ -357,6 +274,7 @@ end
 
 -- Configuration validation --
 
+---@param seconds number
 local function ValidateSeconds(seconds)
     if type(seconds) ~= "number"
         or seconds ~= seconds
@@ -372,8 +290,11 @@ end
 -- Interfaces --
 
 ---@param addonIdentifier string
-function FlightRecorder.Record(addonIdentifier, ...)
-    RecordFlightEvent(addonIdentifier, ...)
+---@param severity Severity
+---@param message string
+---@param timestamp number
+function FlightRecorder.Record(addonIdentifier, severity, message, timestamp)
+    RecordFlightEvent(addonIdentifier, severity, message, timestamp)
 end
 
 ---@param addonIdentifier string
