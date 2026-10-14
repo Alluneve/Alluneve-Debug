@@ -1,3 +1,7 @@
+local _, private = ...
+local RollingLog = {}
+private.RollingLog = RollingLog
+
 local PAGE_SIZE = 256
 
 -- Plain Old Lua Objects --
@@ -13,7 +17,7 @@ local PAGE_SIZE = 256
 
 
 ---@enum Severity
-Severity = {
+RollingLog.Severity = {
     DEBUG = "DEBUG",
     INFO = "INFO",
     WARN = "WARN",
@@ -30,7 +34,7 @@ Severity = {
 ---@param message string
 ---@param timestamp number
 ---@return LogObject
-function CreateLogObject(severity, message, timestamp)
+function RollingLog.CreateLogObject(severity, message, timestamp)
     return {
         severity = severity,
         timestamp = timestamp or GetTimePreciseSec(),
@@ -220,7 +224,7 @@ end
 
 -- API interface --
 ---@return RollingLog
-function CreateRollingLog()
+function RollingLog.CreateRollingLog()
     ---@type RollingState
     local state = CreateRollingState()
     return {

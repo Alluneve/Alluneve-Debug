@@ -4,6 +4,7 @@ local Debug = {}
 local db
 local flightRecorder
 local helper = private.Helper
+local RollingLog = private.Rollinglog
 
 -- Constructor --
 
@@ -49,11 +50,11 @@ local function Append(addonIdentifier, severity, message, timestamp)
     local log = debugLogs[addonIdentifier]
 
     if not log then
-        log = CreateRollingLog()
+        log = RollingLog.CreateRollingLog()
         debugLogs[addonIdentifier] = log
     end
 
-    local logObject = CreateLogObject(severity, message, timestamp)
+    local logObject = RollingLog.CreateLogObject(severity, message, timestamp)
     log.Append(logObject)
 
     -- Enforce the session log's memory limit on insertion.

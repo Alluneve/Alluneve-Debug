@@ -2,6 +2,7 @@ local ADDON_NAME, private = ...
 
 local Debug = private.Debug
 local FlightRecorder = private.FlightRecorder
+local RollingLog = private.RollingLog
 local RegisteredDebugAddons = {}
 
 -- Business Logic --
@@ -196,22 +197,22 @@ function API.RegisterYourself(addonIdentifier)
         ---Records an informational message in the session log and flight recorder.
         ---@param ... any Message values to log
         Info = function(...)
-            Debug.Log(addonIdentifier, Severity.INFO, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.INFO, ...)
         end,
         ---Records a debug message in the session log and flight recorder.
         ---@param ... any Message values to log
         Debug = function(...)
-            Debug.Log(addonIdentifier, Severity.DEBUG, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.DEBUG, ...)
         end,
         ---Records a warning message in the session log and flight recorder.
         ---@param ... any Message values to log
         Warn = function(...)
-            Debug.Log(addonIdentifier, Severity.WARN, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.WARN, ...)
         end,
         ---Records an error message in the session log and flight recorder, and triggers the flight recorder for submission.
         ---@param ... any Message values to log
         Error = function(...)
-            Debug.Log(addonIdentifier, Severity.ERROR, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.ERROR, ...)
             FlightRecorder.Trigger(addonIdentifier)
         end,
         -- Submit API
@@ -242,11 +243,11 @@ function API.RegisterYourself(addonIdentifier)
         end,
         ---@deprecated Use Log Statements instead, marked for removal in 2.0.0
         Print = function(...)
-            Debug.Log(addonIdentifier, Severity.DEBUG, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.DEBUG, ...)
         end,
         ---@deprecated Use Debug(...) instead, marked for removal in 2.0.0
         Log = function(...)
-            Debug.Log(addonIdentifier, Severity.DEBUG, ...)
+            Debug.Log(addonIdentifier, RollingLog.Severity.DEBUG, ...)
         end,
     }
     RegisteredDebugAddons[addonIdentifier] = addonAPI

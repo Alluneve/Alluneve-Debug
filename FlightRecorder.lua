@@ -1,5 +1,6 @@
 local _, private = ...
 local FlightRecorder = {}
+local RollingLog = private.RollingLog
 
 local db
 local StartCleanupTicker
@@ -61,11 +62,11 @@ local function RecordFlightEvent(addonIdentifier, severity, message, timestamp)
     local log = currentFlightRecorders[addonIdentifier]
 
     if not log then
-        log = CreateRollingLog()
+        log = RollingLog.reateRollingLog()
         currentFlightRecorders[addonIdentifier] = log
     end
 
-    log.Append(CreateLogObject(severity, message, timestamp))
+    log.Append(RollingLog.CreateLogObject(severity, message, timestamp))
 end
 
 -- Global rolling cleanup --
