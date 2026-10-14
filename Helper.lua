@@ -1,6 +1,14 @@
 local _, private = ...
 local Helper = {}
+
 private.Helper = Helper
+local Severity = private.RollingLog.Severity
+local severityOrder = {
+    [Severity.DEBUG] = 1,
+    [Severity.INFO] = 2,
+    [Severity.WARN] = 3,
+    [Severity.ERROR] = 4
+}
 
 function Helper.FormatMessage(...)
     local values = {}
@@ -46,11 +54,24 @@ function Helper.LogObjectToString(addonIdentifier, logObject, referenceTimestamp
     return prefix .. logObject.message
 end
 
+---@overload fun(addonIdentifier: string, logObject: LogObject[])
 ---@param addonIdentifier string
 ---@param logObjects LogObject[]
+---@param minimumSeverity Severity?
 ---@return boolean
-function Helper.SendToBugGrabber(addonIdentifier, logObjects)
-    if #logObjects == 0 then
+function Helper.SendToBugGrabber(addonIdentifier, logObjects, minimumSeverity)
+    if not minimumSeverity then
+        minimumSeverity = Severity.DEBUG
+    end
+    local filteredObjects = {}
+
+    for _, logObject in ipairs(logObjects) do
+        if severityOrder[logObject.severity] >= severityOrder[minimumSeverity] then
+            filteredObjects[#filteredObjects + 1] = logObject
+        end
+    end
+
+    if #filteredObjects == 0 then
         return false
     end
 
@@ -64,11 +85,12 @@ function Helper.SendToBugGrabber(addonIdentifier, logObjects)
         string.format("Alluneve-Debug Report: %s", addonIdentifier),
         string.format("Started (approx): %s", startedAt),
         string.format("Submitted: %s", submittedAt),
-        string.format("Entries: %d", #logObjects),
+        string.format("Entries: %d", #filteredObjects),
+        string.format("Log Level: %s", minimumSeverity),
         ""
     }
 
-    for _, logObject in ipairs(logObjects) do
+    for _, logObject in ipairs(filteredObjects) do
         lines[#lines + 1] = Helper.LogObjectToString(
             addonIdentifier,
             logObject,

@@ -83,7 +83,8 @@ local function Log(addonIdentifier, severity, ...)
 end
 
 ---@param addonIdentifier string
-local function SubmitLog(addonIdentifier)
+---@param severity Severity?
+local function SubmitLog(addonIdentifier, severity)
     local log = debugLogs[addonIdentifier]
     if not log then
         return
@@ -95,9 +96,12 @@ local function SubmitLog(addonIdentifier)
     for logObject in log.Iterator() do
         logObjects[#logObjects + 1] = logObject
     end
-
-    if helper.SendToBugGrabber(addonIdentifier, logObjects) then
-        log.Clear()
+    if not severity then
+        if helper.SendToBugGrabber(addonIdentifier, logObjects) then
+            log.Clear()
+        end
+    else
+        helper.SendToBugGrabber(addonIdentifier, logObjects, severity)
     end
 end
 
@@ -140,8 +144,9 @@ function Debug.Log(addonIdentifier, severity, ...)
 end
 
 ---@param addonIdentifier string
-function Debug.SubmitLog(addonIdentifier)
-    SubmitLog(addonIdentifier)
+---@param severity Severity?
+function Debug.SubmitLog(addonIdentifier, severity)
+    SubmitLog(addonIdentifier, severity)
 end
 
 ---@param addonIdentifier string

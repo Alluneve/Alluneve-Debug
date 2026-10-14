@@ -4,6 +4,7 @@ local Debug = private.Debug
 local FlightRecorder = private.FlightRecorder
 local RollingLog = private.RollingLog
 local RegisteredDebugAddons = {}
+local Severity = private.RollingLog.Severity
 
 -- Business Logic --
 
@@ -69,52 +70,75 @@ local timingSetters = {
 }
 
 local function HandleSlashCommand(message)
-    local command, value =
-        message:match("^%s*(%S*)%s*(%S*)")
+    local target, command, value, extra =
+        message:match("^%s*(%S*)%s*(%S*)%s*(%S*)%s*(.-)%s*$")
 
-    command = command:lower()
+    local globalCommand = target:lower()
 
-    if command == "" or command == "show" then
+    if globalCommand == "" or globalCommand == "show" then
         PrintFlightRecorderSettings()
         return
     end
 
-    if command == "trigger" or command == "submit" then
-        if value == "" then
-            print("Alluneve-Debug: Missing Addon Identifier.")
+    local setter = timingSetters[globalCommand]
+
+    if setter then
+        local seconds = tonumber(command)
+
+        if not seconds or seconds <= 0
+            or seconds >= math.huge
+            or seconds ~= seconds
+            or value ~= ""
+            or extra ~= "" then
+            print("Alluneve-Debug: Seconds must be a positive finite number.")
             return
         end
-        if not RegisteredDebugAddons[value] then
-            print("Alluneve-Debug: Addon Identifier " .. value .. " not registered.")
+
+        setter(seconds)
+        PrintFlightRecorderSettings()
+        return
+    end
+
+    local addonIdentifier = target
+    local action = command:lower()
+
+    if action == "trigger" or action == "submit" then
+        if not RegisteredDebugAddons[addonIdentifier] then
+            print("Alluneve-Debug: Addon Identifier " .. addonIdentifier .. " not registered.")
             return
         end
-        if command == "submit" then
-            Debug.SubmitLog(value)
+
+        if action == "submit" then
+            if extra ~= "" then
+                print("Alluneve-Debug: Too many arguments.")
+                return
+            end
+
+            local severity
+
+            if value ~= "" then
+                severity = Severity[value:upper()]
+
+                if not severity then
+                    print("Alluneve-Debug: Invalid severity: " .. value)
+                    return
+                end
+            end
+
+            Debug.SubmitLog(addonIdentifier, severity)
         else
-            FlightRecorder.Trigger(value)
+            if value ~= "" or extra ~= "" then
+                print("Alluneve-Debug: Trigger does not accept arguments.")
+                return
+            end
+
+            FlightRecorder.Trigger(addonIdentifier)
         end
         return
     end
 
-    local setter = timingSetters[command]
-
-    if not setter then
-        print("Usage: /alludebug [show | capture | posttrigger | ticker] <seconds>")
-        print("       /alludebug [trigger | submit] <addonIdentifier>")
-        return
-    end
-
-    local seconds = tonumber(value)
-
-    if not seconds or seconds <= 0
-        or seconds >= math.huge
-        or seconds ~= seconds then
-        print("Alluneve-Debug: Seconds must be a positive finite number.")
-        return
-    end
-
-    setter(seconds)
-    PrintFlightRecorderSettings()
+    print("Usage: /alludebug [show | capture | posttrigger | ticker] <seconds>")
+    print("       /alludebug <addonIdentifier> [trigger | submit] [severity]")
 end
 
 
