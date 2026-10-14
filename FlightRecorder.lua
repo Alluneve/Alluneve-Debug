@@ -62,7 +62,7 @@ local function RecordFlightEvent(addonIdentifier, severity, message, timestamp)
     local log = currentFlightRecorders[addonIdentifier]
 
     if not log then
-        log = RollingLog.reateRollingLog()
+        log = RollingLog.CreateRollingLog()
         currentFlightRecorders[addonIdentifier] = log
     end
 

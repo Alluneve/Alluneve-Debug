@@ -1,0 +1,8 @@
+## Interface: 120105, 50504, 20506, 11509, 16001
+## Title: Alluneve-Debug-Tester
+## Notes: Optional debugging suite's Tester
+## Author: Alluneve
+## Version: 0.0.1
+## Dependencies: Alluneve-Debug
+
+DebugTest.lua

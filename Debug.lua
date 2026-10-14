@@ -4,7 +4,7 @@ local Debug = {}
 local db
 local flightRecorder
 local helper = private.Helper
-local RollingLog = private.Rollinglog
+local RollingLog = private.RollingLog
 
 -- Constructor --
 
