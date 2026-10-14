@@ -229,7 +229,9 @@ local function SubmitFlightRecorder(addonIdentifier)
         logObjects[#logObjects + 1] = logObject
     end
 
-    private.Helper.SendToBugGrabber(addonIdentifier, logObjects)
+    if private.Helper.SendToBugGrabber(addonIdentifier, logObjects) then
+        log.Clear()
+    end
 end
 
 -- Trigger management --

@@ -96,7 +96,9 @@ local function SubmitLog(addonIdentifier)
         logObjects[#logObjects + 1] = logObject
     end
 
-    helper.SendToBugGrabber(addonIdentifier, logObjects)
+    if helper.SendToBugGrabber(addonIdentifier, logObjects) then
+        log.Clear()
+    end
 end
 
 ---@param addonIdentifier string
