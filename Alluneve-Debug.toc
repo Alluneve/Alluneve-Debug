@@ -1,8 +1,8 @@
-## Interface: 120105, 50504, 20506, 11509
+## Interface: 120105, 50504, 20506, 11509, 16001
 ## Title: Alluneve-Debug
 ## Notes: Optional debugging suite
 ## Author: Alluneve
-## Version: 1.2.0
+## Version: 2.0.0
 ## Dependencies: !BugGrabber
 ## SavedVariables: AlluneveDebugDB
 ## X-Curse-Project-ID: 1739170

@@ -36,7 +36,7 @@ function Helper.LogObjectToString(addonIdentifier, logObject, referenceTimestamp
 
     if referenceTimestamp then
         prefix = string.format(
-            "[+%.6f] %-5s ",
+            "[%+.6f] %-5s ",
             logObject.timestamp - referenceTimestamp,
             logObject.severity
         )
@@ -54,15 +54,19 @@ function Helper.LogObjectToString(addonIdentifier, logObject, referenceTimestamp
     return prefix .. logObject.message
 end
 
----@overload fun(addonIdentifier: string, logObject: LogObject[])
+local MAX_REPORT_PAGE_LENGTH = 80000
+
+---@overload fun(addonIdentifier: string, logObjects: LogObject[]): boolean
+---@overload fun(addonIdentifier: string, logObjects: LogObject[], minimumSeverity: Severity): boolean
+---@overload fun(addonIdentifier: string, logObjects: LogObject[], minimumSeverity: Severity?, triggerTime: number?): boolean
 ---@param addonIdentifier string
 ---@param logObjects LogObject[]
 ---@param minimumSeverity Severity?
+---@param triggerTime number?
 ---@return boolean
-function Helper.SendToBugGrabber(addonIdentifier, logObjects, minimumSeverity)
-    if not minimumSeverity then
-        minimumSeverity = Severity.DEBUG
-    end
+function Helper.SendToBugGrabber(addonIdentifier, logObjects, minimumSeverity, triggerTime)
+    minimumSeverity = minimumSeverity or Severity.DEBUG
+
     local filteredObjects = {}
 
     for _, logObject in ipairs(logObjects) do
@@ -75,35 +79,95 @@ function Helper.SendToBugGrabber(addonIdentifier, logObjects, minimumSeverity)
         return false
     end
 
-    local referenceTimestamp = logObjects[1].timestamp
     local submittedAt = date("%Y/%m/%d %H:%M:%S")
 
+    -- Use the trigger time when available, otherwise the first original log entry.
+    local referenceTimestamp = triggerTime or logObjects[1].timestamp
     local elapsed = GetTimePreciseSec() - referenceTimestamp
-    local startedAt = date("%Y/%m/%d %H:%M:%S", time() - elapsed)
+    local referenceDate = date("%Y/%m/%d %H:%M:%S", time() - elapsed)
 
-    local lines = {
+    local prefix = {
         string.format("Alluneve-Debug Report: %s", addonIdentifier),
-        string.format("Started (approx): %s", startedAt),
+        string.format(
+            "%s (approx): %s",
+            triggerTime and "Triggered" or "Started",
+            referenceDate
+        ),
         string.format("Submitted: %s", submittedAt),
         string.format("Entries: %d", #filteredObjects),
         string.format("Log Level: %s", minimumSeverity),
-        ""
     }
+
+    local pages = {}
+    local currentPage = {}
+    local currentLength = 0
 
     for _, logObject in ipairs(filteredObjects) do
-        lines[#lines + 1] = Helper.LogObjectToString(
+        local line = Helper.LogObjectToString(
             addonIdentifier,
             logObject,
-            referenceTimestamp
+            triggerTime
         )
+
+        local lineLength = #line + 1 -- Include newline separator.
+
+        -- Reject an individual entry that cannot fit on a page.
+        if lineLength > MAX_REPORT_PAGE_LENGTH then
+            return false
+        end
+
+        -- Start a new page when the log content exceeds 80,000 characters.
+        if currentLength + lineLength > MAX_REPORT_PAGE_LENGTH and #currentPage > 0 then
+            pages[#pages + 1] = currentPage
+            currentPage = {}
+            currentLength = 0
+        end
+
+        currentPage[#currentPage + 1] = line
+        currentLength = currentLength + lineLength
     end
 
-    local errorObject = {
-        message = table.concat(lines, "\n"),
-        session = BugGrabber:GetSessionId(),
-        time = submittedAt,
-        counter = 1,
-    }
+    if #currentPage > 0 then
+        pages[#pages + 1] = currentPage
+    end
 
-    return pcall(BugGrabber.StoreError, BugGrabber, errorObject)
+    local sessionId = BugGrabber:GetSessionId()
+
+    for pageNumber, pageLines in ipairs(pages) do
+        local lines = {}
+
+        for _, headerLine in ipairs(prefix) do
+            lines[#lines + 1] = headerLine
+        end
+
+        lines[#lines + 1] = string.format(
+            "Page: %d/%d",
+            pageNumber,
+            #pages
+        )
+        lines[#lines + 1] = ""
+
+        for _, line in ipairs(pageLines) do
+            lines[#lines + 1] = line
+        end
+
+        local errorObject = {
+            message = table.concat(lines, "\n"),
+            session = sessionId,
+            time = submittedAt,
+            counter = 1,
+        }
+
+        local success = pcall(
+            BugGrabber.StoreError,
+            BugGrabber,
+            errorObject
+        )
+
+        if not success then
+            return false
+        end
+    end
+
+    return true
 end

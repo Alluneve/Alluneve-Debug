@@ -96,7 +96,7 @@ local function SubmitLog(addonIdentifier, severity)
     for logObject in log.Iterator() do
         logObjects[#logObjects + 1] = logObject
     end
-    if not severity then
+    if not severity or severity == private.RollingLog.Severity.DEBUG then
         if helper.SendToBugGrabber(addonIdentifier, logObjects) then
             log.Clear()
         end

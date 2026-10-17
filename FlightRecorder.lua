@@ -215,7 +215,8 @@ end
 -- Report submission --
 
 ---@param addonIdentifier string
-local function SubmitFlightRecorder(addonIdentifier)
+---@param triggerTime number?
+local function SubmitFlightRecorder(addonIdentifier, triggerTime)
     local log = currentFlightRecorders[addonIdentifier]
 
     if not log then
@@ -229,7 +230,12 @@ local function SubmitFlightRecorder(addonIdentifier)
         logObjects[#logObjects + 1] = logObject
     end
 
-    if private.Helper.SendToBugGrabber(addonIdentifier, logObjects) then
+    if private.Helper.SendToBugGrabber(
+        addonIdentifier,
+        logObjects,
+        nil,
+        triggerTime
+    ) then
         log.Clear()
     end
 end
@@ -243,12 +249,16 @@ local function TriggerFlightRecorder(addonIdentifier)
     if not trigger then
         trigger = {
             timer = nil,
+            timestamp = nil,
         }
 
         activeTriggers[addonIdentifier] = trigger
     end
 
-    -- Repeated triggers extend the post-trigger window.
+    -- Repeated triggers update the reference timestamp
+    -- and extend the post-trigger recording window.
+    trigger.timestamp = GetTimePreciseSec()
+
     if trigger.timer then
         trigger.timer:Cancel()
     end
@@ -258,7 +268,7 @@ local function TriggerFlightRecorder(addonIdentifier)
         function()
             trigger.timer = nil
 
-            SubmitFlightRecorder(addonIdentifier)
+            SubmitFlightRecorder(addonIdentifier, trigger.timestamp)
 
             currentFlightRecorders[addonIdentifier] = nil
             activeTriggers[addonIdentifier] = nil
@@ -289,6 +299,7 @@ local function ValidateSeconds(seconds)
         )
     end
 end
+
 
 -- Interfaces --
 

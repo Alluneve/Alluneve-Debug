@@ -196,13 +196,9 @@ local API = {}
 ---@field Debug fun(...: any) Records a debug message.
 ---@field Warn fun(...: any) Records a warning.
 ---@field Error fun(...: any) Records an error and triggers the recorder.
----@field SubmitLog fun() Submits the session log to BugGrabber.
+---@field SubmitLog fun(minimumSeverity: Severity?) Submits the session log to BugGrabber.
 ---@field TogglePrint fun(): boolean Toggles chat output.
 ---@field TriggerRecorder fun() Manually triggers the flight recorder.
----@field ToggleDebugLog fun() Deprecated: Does nothing. Removal in 2.0.0.
----@field ToggleDebugPrint fun(): boolean Deprecated: Use TogglePrint(). Removal in 2.0.0.
----@field Print fun(...: any) Deprecated: Use Debug(). Removal in 2.0.0.
----@field Log fun(...: any) Deprecated: Use Debug(). Removal in 2.0.0.
 
 ---@param addonIdentifier string
 ---@return AlluneveDebugAPI
@@ -241,8 +237,9 @@ function API.RegisterYourself(addonIdentifier)
         end,
         -- Submit API
         ---Submits the debug log
-        SubmitLog = function()
-            Debug.SubmitLog(addonIdentifier)
+        ---@param minimumSeverity Severity?
+        SubmitLog = function(minimumSeverity)
+            Debug.SubmitLog(addonIdentifier, minimumSeverity)
         end,
         -- Toggle Debug Print API
         ---Toggles the debug print status
@@ -254,24 +251,6 @@ function API.RegisterYourself(addonIdentifier)
         ---Triggers the flight recorder
         TriggerRecorder = function()
             FlightRecorder.Trigger(addonIdentifier)
-        end,
-
-
-        -- Deprecated APIs
-        ---@deprecated  marked for removal in 2.0.0, does nothing anymore
-        ToggleDebugLog = function()
-        end,
-        ---@deprecated Use TogglePrint(...) instead, marked for removal in 2.0.0
-        ToggleDebugPrint = function()
-            return Debug.TogglePrint(addonIdentifier)
-        end,
-        ---@deprecated Use Log Statements instead, marked for removal in 2.0.0
-        Print = function(...)
-            Debug.Log(addonIdentifier, RollingLog.Severity.DEBUG, ...)
-        end,
-        ---@deprecated Use Debug(...) instead, marked for removal in 2.0.0
-        Log = function(...)
-            Debug.Log(addonIdentifier, RollingLog.Severity.DEBUG, ...)
         end,
     }
     RegisteredDebugAddons[addonIdentifier] = addonAPI

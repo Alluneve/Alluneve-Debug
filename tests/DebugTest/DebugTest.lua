@@ -37,8 +37,14 @@ SlashCmdList["ALLUNEVEDEBUGTEST"] = function(message)
     end
 
     if command == "submit" then
-        debugAPI.SubmitLog()
-        print("DebugTest: Submission requested")
+        local severity = argument:upper()
+
+        if severity == "" then
+            severity = nil
+        end
+
+        debugAPI.SubmitLog(severity)
+        print("DebugTest: Submission requested" .. (severity and (" (" .. severity .. ")") or ""))
         return
     end
 
@@ -67,7 +73,7 @@ SlashCmdList["ALLUNEVEDEBUGTEST"] = function(message)
     print("/alludebugtest info [message]")
     print("/alludebugtest warn [message]")
     print("/alludebugtest error [message]")
-    print("/alludebugtest submit")
+    print("/alludebugtest submit [severity]")
     print("/alludebugtest print")
     print("/alludebugtest trigger")
 end
