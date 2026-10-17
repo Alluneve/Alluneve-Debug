@@ -2,9 +2,9 @@
 
 ## Alluneve_Debug_Logo.png
 
-The artwork located at `Assets/Alluneve_Debug_logo.png` was commissioned by Alluneve and created by **Rattus**.
+The artwork located at `Assets/Alluneve_Debug_logo.png` was commissioned by Alluneve and created by [**Peculiardane**](https://www.instagram.com/peculiardane/).
 
-**Copyright © 2026 Rattus. All rights reserved.**
+**Copyright © 2026 Peculiardane. All rights reserved.**
 
 The artist has expressly granted the commissioner permission to use the artwork, subject to the following conditions:
 
@@ -24,6 +24,6 @@ Anyone wishing to use the artwork independently should obtain permission from th
 
 ### Attribution
 
-Artwork by **Rattus**, commissioned by **Alluneve**.
+Artwork by [**Peculiardane**](https://www.instagram.com/peculiardane/), commissioned by **Alluneve**.
 
 Permission confirmed by the artist in writing on October 17, 2026.
